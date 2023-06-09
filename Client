@@ -1,0 +1,105 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <pcap.h>
+#include <netinet/if_ether.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+
+#define BUF_SIZE 1024
+#define NETWORK_LOG_FILE "client_network_log.txt"
+
+void error_handling(char *message);
+void packet_handler(unsigned char *user_data, const struct pcap_pkthdr *pkthdr, const unsigned char *packet);
+
+int main(int argc, char *argv[]) {
+int sock;
+char message[BUF_SIZE];
+int str_len;
+struct sockaddr_in serv_adr;if (argc != 3) {
+    printf("Usage: %s <Server IP> <Server Port>\n", argv[0]);
+    exit(1);
+}
+
+sock = socket(AF_INET, SOCK_STREAM, 0);
+if (sock == -1)
+    error_handling("socket() error");
+
+memset(&serv_adr, 0, sizeof(serv_adr));
+serv_adr.sin_family = AF_INET;
+serv_adr.sin_addr.s_addr = inet_addr(argv[1]);
+serv_adr.sin_port = htons(atoi(argv[2]));
+
+if (connect(sock, (struct sockaddr *)&serv_adr, sizeof(serv_adr)) == -1)
+    error_handling("connect() error");
+
+pcap_t *handle;
+char errbuf[PCAP_ERRBUF_SIZE];
+
+handle = pcap_open_dead(DLT_EN10MB, BUFSIZ);
+if (handle == NULL)
+    error_handling("pcap_open_dead() error");
+
+pcap_dumper_t *dumper = pcap_dump_open(handle, NETWORK_LOG_FILE);
+if (dumper == NULL)
+    error_handling("pcap_dump_open() error");
+
+int option;
+while (1) {
+    printf("\nOptions:\n");
+    printf("1. Send message\n");
+    printf("2. Read log file\n");
+    printf("3. Quit\n");
+    printf("Enter option: ");
+    scanf("%d", &option);
+    getchar(); // Consume newline character
+
+    if (option == 1) {
+        printf("Enter message to send: ");
+        fgets(message, BUF_SIZE, stdin);
+        message[strcspn(message, "\n")] = 0; // Remove newline character
+
+        write(sock, message, strlen(message));
+        printf("Message sent.\n");
+    } else if (option == 2) {
+        FILE *file = fopen(NETWORK_LOG_FILE, "r");
+        if (file == NULL) {
+            printf("Failed to open log file.\n");
+        } else {
+            char buffer[BUF_SIZE];
+            while (fgets(buffer, BUF_SIZE, file) != NULL) {
+                size_t len = strlen(buffer);
+                if (len > 0 && buffer[len - 1] == '\n') {
+                    printf("%s", buffer);
+                } else {
+                    printf("%s\n", buffer);
+                }
+            }
+            fclose(file);
+        }
+    } else if (option == 3) {
+        break;
+    } else {
+        printf("Invalid option. Please try again.\n");
+    }
+}
+
+pcap_dump_close(dumper);
+pcap_close(handle);
+close(sock);
+return 0;
+}
+
+void error_handling(char *message) {
+fputs(message, stderr);
+fputc('\n', stderr);
+exit(1);
+}
+
+void packet_handler(unsigned char *user_data, const struct pcap_pkthdr *pkthdr, const unsigned char *packet) {
+pcap_dumper_t *dumper = (pcap_dumper_t *)user_data;
+pcap_dump((u_char *)dumper, pkthdr, packet);
+}
