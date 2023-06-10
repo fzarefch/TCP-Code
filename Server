@@ -1,228 +1,124 @@
 #include <stdio.h>
-
 #include <stdlib.h>
-
 #include <string.h>
-
 #include <unistd.h>
-
 #include <sys/types.h>
-
 #include <sys/socket.h>
-
 #include <netinet/in.h>
-
 #include <netdb.h>
-
 #include <pcap.h>
 
-
-
 #define MAX_BUFFER 256
-
 #define PCAP_FILE "netzwerkverkehr.pcap"
-
 #define LOG_FILE "netzwerkverkehr.log"
 
-
-
 void fehler(const char *msg) {
-
     perror(msg);
-
     exit(1);
-
 }
-
-
 
 void netzwerkverkehr_aufzeichnen(const char *dateiname) {
-
     char errbuf[PCAP_ERRBUF_SIZE];
-
     pcap_t *handle;
-
     pcap_dumper_t *dumper;
 
-
-
     handle = pcap_open_live("any", BUFSIZ, 1, 1000, errbuf);
-
     if (handle == NULL) {
-
         fprintf(stderr, "Konnte den pcap-Handle nicht öffnen: %s\n", errbuf);
-
         return;
-
     }
-
-
 
     dumper = pcap_dump_open(handle, dateiname);
-
     if (dumper == NULL) {
-
         fprintf(stderr, "Konnte die pcap-Dump-Datei nicht öffnen\n");
-
         return;
-
     }
-
-
 
     struct pcap_pkthdr header;
-
     const unsigned char *paket;
-
     int paketzähler = 0;
 
-
-
     while (paketzähler < 10) {
-
         paket = pcap_next(handle, &header);
-
         if (paket == NULL) {
-
             continue;
-
         }
 
-
-
         pcap_dump((unsigned char *)dumper, &header, paket);
-
         paketzähler++;
-
     }
-
-
 
     pcap_dump_close(dumper);
-
     pcap_close(handle);
 
-
-
     printf("Aufgezeichneter Netzwerkverkehr wurde in %s gespeichert\n", dateiname);
-
 }
 
-
-
 int main(int argc, char *argv[]) {
-
     int sockfd, newsockfd, portno, n;
-
     socklen_t clilen;
-
     char buffer[MAX_BUFFER];
-
     struct sockaddr_in serv_addr, cli_addr;
 
-    FILE *datei;
-
-    char daten[100];
-
-
-
     if (argc < 2) {
-
         fprintf(stderr, "Verwendung: %s port\n", argv[0]);
-
         exit(1);
-
     }
-
-
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
-
     if (sockfd < 0) {
-
         fehler("FEHLER beim Öffnen des Sockets");
-
     }
-
-
 
     bzero((char *) &serv_addr, sizeof(serv_addr));
-
     portno = atoi(argv[1]);
-
     serv_addr.sin_family = AF_INET;
-
     serv_addr.sin_addr.s_addr = INADDR_ANY;
-
     serv_addr.sin_port = htons(portno);
 
-
-
     if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
-
         fehler("FEHLER beim Binden");
-
     }
 
-
-
     listen(sockfd, 5);
-
     clilen = sizeof(cli_addr);
-
-
-
-    // Netzwerkverkehr aufzeichnen und in Datei speichern
 
     netzwerkverkehr_aufzeichnen(PCAP_FILE);
 
-
-
     while (1) {
-
         newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
-
         if (newsockfd < 0) {
-
             fehler("FEHLER beim Akzeptieren der Verbindung");
-
         }
 
-
-
         bzero(buffer, MAX_BUFFER);
+        n = read(newsockfd, buffer, MAX_BUFFER - 1);
+        if (n < 0) {
+            fehler("FEHLER beim Lesen vom Socket");
+        }
 
-n = read(newsockfd, buffer, MAX_BUFFER - 1);
+        printf("Nachricht erhalten: %s", buffer);
+        FILE *logFile = fopen(LOG_FILE, "a");
+        if(logFile != NULL) {
+            fprintf(logFile, "%s\n", buffer);
+            fclose(logFile);
+        } else {
+            printf("FEHLER beim Öffnen der Log-Datei\n");
+        }
 
-if (n < 0) {
+        n = write(newsockfd, "Nachricht erhalten", 18);
+        if (n < 0) {
+            fehler("FEHLER beim Schreiben auf den Socket");
+        }
 
-fehler("FEHLER beim Lesen vom Socket");
-
-}
-
-    printf("Nachricht erhalten: %s", buffer);
-
-
-
-    n = write(newsockfd, "Nachricht erhalten", 18);
-
-    if (n < 0) {
-
-        fehler("FEHLER beim Schreiben auf den Socket");
-
+        close(newsockfd);
     }
 
+    close(sockfd);
 
-
-    close(newsockfd);
-
+    return 0;
 }
 
+        
 
-
-close(sockfd);
-
-return 0;
-
-}
 
