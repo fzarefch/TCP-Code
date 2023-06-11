@@ -8,6 +8,11 @@
 #include <netdb.h>
 #include <pthread.h>
 #include <pcap.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+#include <netinet/ether.h>
+#include <netinet/if_ether.h>
+#include <arpa/inet.h>
 
 #define MAX_BUFFER 256
 #define PCAP_FILE "netzwerkverkehr.pcap"
@@ -21,12 +26,14 @@ void fehler(const char *msg) {
 typedef struct {
     pcap_t *handle;
     pcap_dumper_t *dumper;
+    FILE *logfile;
 } PcapData;
 
 void *netzwerkverkehr_aufzeichnen(void *arg) {
     PcapData *pcapData = (PcapData *)arg;
     pcap_t *handle = pcapData->handle;
     pcap_dumper_t *dumper = pcapData->dumper;
+    FILE *logfile = pcapData->logfile;
 
     struct pcap_pkthdr header;
     const unsigned char *packet;
@@ -39,11 +46,25 @@ void *netzwerkverkehr_aufzeichnen(void *arg) {
             continue;
         }
 
-        pcap_dump((unsigned char *)dumper, &header, packet);
+        struct ether_header *eth_hdr = (struct ether_header *)packet;
+        if (ntohs(eth_hdr->ether_type) == ETHERTYPE_IP) {
+            struct ip *ip_hdr = (struct ip *)(packet + ETHER_HDR_LEN);
+            if (ip_hdr->ip_p == IPPROTO_TCP) {
+                struct tcphdr *tcp_hdr = (struct tcphdr *)((unsigned char *)ip_hdr + (ip_hdr->ip_hl << 2));
+                fprintf(logfile, "Paket %d:\n", paketzähler);
+                fprintf(logfile, "Quell-IP: %s\n", inet_ntoa(ip_hdr->ip_src));
+                fprintf(logfile, "Ziel-IP: %s\n", inet_ntoa(ip_hdr->ip_dst));
+                fprintf(logfile, "Quell-Port: %d\n", ntohs(tcp_hdr->th_sport));
+                fprintf(logfile, "Ziel-Port: %d\n", ntohs(tcp_hdr->th_dport));
+                fprintf(logfile, "Flags: 0x%x\n", tcp_hdr->th_flags);
+            }
+        }
 
+        pcap_dump((unsigned char *)dumper, &header, packet);
         paketzähler++;
     }
 
+    fclose(logfile);
     pcap_dump_close(dumper);
     pcap_close(handle);
 
@@ -70,8 +91,7 @@ int main(int argc, char *argv[]) {
     if (argc < 3) {
         fprintf(stderr, "Verwendung: %s hostname port\n", argv[0]);
         exit(1);
-    }
-
+    } //
     portno = atoi(argv[2]);
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
@@ -101,93 +121,109 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    pcapData.dumper = pcap_dump_open(pcapData.handle,PCAP_FILE);
-if (pcapData.dumper == NULL) {
-fprintf(stderr, "Konnte die pcap-Dump-Datei nicht öffnen\n");
-pcap_close(pcapData.handle);
-exit(1);
-}while (1) {
-    menü_anzeigen();
-    scanf("%d", &auswahl);
-    getchar();
+    pcapData.dumper = pcap_dump_open(pcapData.handle, PCAP_FILE);
+    if (pcapData.dumper == NULL) {
+        fprintf(stderr, "Konnte die pcap-Dump-Datei nicht öffnen\n");
+        pcap_close(pcapData.handle);
+        exit(1);
+    }
 
-    switch (auswahl) {
-        case 1: {
-            printf("Bitte geben Sie die Nachricht ein: ");
-            bzero(buffer, MAX_BUFFER);
-            fgets(buffer, MAX_BUFFER - 1, stdin);
+    pcapData.logfile = fopen(LOG_FILE, "a");
+    if (pcapData.logfile == NULL) {
+        fprintf(stderr, "Konnte die Log-Datei nicht öffnen\n");
+        pcap_close(pcapData.handle);
+        pcap_dump_close(pcapData.dumper);
+        exit(1);
+    }
 
-            n = write(sockfd, buffer, strlen(buffer));
-            if (n < 0) {
-                fehler("FEHLER beim Schreiben auf den Socket");
-            } else {
-                FILE *log = fopen(LOG_FILE, "a");
+    while (1) {
+        menü_anzeigen();
+        scanf("%d", &auswahl);
+        getchar();
+
+        switch (auswahl) {
+            case 1: {
+                printf("Bitte geben Sie die Nachricht ein: ");
+                bzero(buffer, MAX_BUFFER);
+                fgets(buffer, MAX_BUFFER - 1, stdin);
+
+                n = write(sockfd, buffer, strlen(buffer));
+                if (n < 0) {
+                    fehler("FEHLER beim Schreiben auf den Socket");
+                } else {
+                    FILE *log = fopen(LOG_FILE, "a");
+                    if (log != NULL) {
+                        fputs(buffer, log);
+                        fclose(log);
+                    } else {
+                        perror("Konnte Log-Datei nicht öffnen");
+                    }
+                }
+                break;
+            }
+            case 2: {
+                printf("Bitte geben Sie die Nachricht ein: ");
+                bzero(buffer, MAX_BUFFER);
+                fgets(buffer, MAX_BUFFER - 1, stdin);
+
+                int udpsockfd;
+                struct sockaddr_in udp_serv_addr;
+
+                udpsockfd = socket(AF_INET, SOCK_DGRAM, 0);
+                if (udpsockfd < 0) {
+                    fehler("FEHLER beim Öffnen des UDP-Sockets");
+                }
+
+                bzero((char *)&udp_serv_addr, sizeof(udp_serv_addr)); 
+                udp_serv_addr.sin_family = AF_INET;
+                bcopy((char *)server->h_addr, (char *)&udp_serv_addr.sin_addr.s_addr, server->h_length);
+                udp_serv_addr.sin_port = htons(portno);
+
+                n = sendto(udpsockfd, buffer, strlen(buffer), 0, (struct sockaddr *) &udp_serv_addr, sizeof(udp_serv_addr));
+                if (n < 0) {
+                    fehler("FEHLER beim Senden der UDP-Nachricht");
+                } else {
+                    FILE *log = fopen(LOG_FILE, "a");
+                    if (log != NULL) {
+                        fputs(buffer, log);
+                        fclose(log);
+                    } else {
+                        perror("Konnte Log-Datei nicht öffnen");
+                    }
+                }
+                close(udpsockfd);
+                break;
+            }
+            case 3: {
+                printf("Starte die Aufzeichnung des Netzwerkverkehrs...\n");
+                pthread_create(&pcapThread, NULL, netzwerkverkehr_aufzeichnen, &pcapData);
+                pthread_detach(pcapThread);
+                break;
+            }
+            case 4: {
+                FILE *log = fopen(LOG_FILE, "r");
                 if (log != NULL) {
-                    fputs(buffer, log);
+                    while (fgets(buffer, MAX_BUFFER, log) != NULL) {
+                        printf("%s", buffer);
+                    }
                     fclose(log);
                 } else {
                     perror("Konnte Log-Datei nicht öffnen");
                 }
+                break;
             }
-            break;
-        }
-        case 2: {
-            printf("Bitte geben Sie die Nachricht ein: ");
-            bzero(buffer, MAX_BUFFER);
-            fgets(buffer, MAX_BUFFER - 1, stdin);
-
-            int udpsockfd;
-            struct sockaddr_in udp_serv_addr;
-
-            udpsockfd = socket(AF_INET, SOCK_DGRAM, 0);
-            if (udpsockfd < 0) {
-                fehler("FEHLER beim Öffnen des UDP-Sockets");
+            case 5: {
+                printf("Beende das Programm...\n");
+                close(sockfd);
+                exit(0);
             }
-
-            bzero((char *)&udp_serv_addr, sizeof(udp_serv_addr));
-            udp_serv_addr.sin_family = AF_INET;
-            bcopy((char *)server->h_addr_list[0], (char *)&udp_serv_addr.sin_addr.s_addr, server->h_length);
-            udp_serv_addr.sin_port = htons(portno);
-
-            n = sendto(udpsockfd, buffer, strlen(buffer), 0, (struct sockaddr *)&udp_serv_addr, sizeof(udp_serv_addr));
-            if (n < 0) {
-                fehler("FEHLER beim Schreiben auf den UDP-Socket");
+            default: {
+                printf("Ungültige Auswahl. Bitte versuchen Sie es erneut.\n");
+                break;
             }
-
-            close(udpsockfd);
-
-            break;
-        }
-        case 3: {
-            if (pthread_create(&pcapThread, NULL, netzwerkverkehr_aufzeichnen, (void *)&pcapData) != 0) {
-                fprintf(stderr, "FEHLER beim Erstellen des Pcap-Threads\n");
-            }
-            pthread_join(pcapThread, NULL);
-            break;
-        }
-        case 4: {
-            FILE *log = fopen(LOG_FILE, "r");
-            if (log != NULL) {
-                while (fgets(buffer, MAX_BUFFER, log)) {
-                    printf("%s", buffer);
-                }
-                fclose(log);
-            } else {
-                perror("Konnte Log-Datei nicht öffnen");
-            }
-            break;
-        }
-        case 5: {
-            close(sockfd);
-            printf("Verbindung beendet\n");
-            exit(0);
-        }
-        default: {
-            printf("Unbekannte Auswahl, bitte versuchen Sie es erneut.\n");
         }
     }
-}
 
-return 0;
+    return 0;
 }
 
