@@ -1,16 +1,16 @@
-#include <stdio.h>
+include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <netdb.h>
 #include <pcap.h>
+#include <arpa/inet.h>
 
 #define MAX_BUFFER 256
-#define PCAP_FILE "netzwerkverkehr.pcap"
-#define LOG_FILE "netzwerkverkehr.log"
+#define PCAP_FILE "/home/kali/Schreibtisch/Projekt/fixed_netzwerkverkehr.pcap"
+#define LOG_FILE "/home/kali/Schreibtisch/Projekt/netzwerkverkehr.log"
 
 void fehler(const char *msg) {
     perror(msg);
@@ -35,17 +35,17 @@ void netzwerkverkehr_aufzeichnen(const char *dateiname) {
     }
 
     struct pcap_pkthdr header;
-    const unsigned char *paket;
-    int paketzähler = 0;
+    const u_char *packet;
+    int packet_counter = 0;
 
-    while (paketzähler < 10) {
-        paket = pcap_next(handle, &header);
-        if (paket == NULL) {
+    while (packet_counter < 100) {
+        packet = pcap_next(handle, &header);
+        if (packet == NULL) {
             continue;
         }
 
-        pcap_dump((unsigned char *)dumper, &header, paket);
-        paketzähler++;
+        pcap_dump((u_char *)dumper, &header, packet);
+        packet_counter++;
     }
 
     pcap_dump_close(dumper);
@@ -55,70 +55,120 @@ void netzwerkverkehr_aufzeichnen(const char *dateiname) {
 }
 
 int main(int argc, char *argv[]) {
-    int sockfd, newsockfd, portno, n;
+    int tcp_sockfd, udp_sockfd, newsockfd, tcp_portno, udp_portno, n;
     socklen_t clilen;
     char buffer[MAX_BUFFER];
-    struct sockaddr_in serv_addr, cli_addr;
+    struct sockaddr_in tcp_serv_addr, udp_serv_addr, cli_addr;
 
-    if (argc < 2) {
-        fprintf(stderr, "Verwendung: %s port\n", argv[0]);
+    if (argc < 3) {
+        fprintf(stderr, "Verwendung: %s tcp_port udp_port\n", argv[0]);
         exit(1);
     }
 
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        fehler("FEHLER beim Öffnen des Sockets");
+    tcp_sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (tcp_sockfd < 0) {
+        fehler("FEHLER beim Öffnen des TCP-Sockets");
     }
 
-    bzero((char *) &serv_addr, sizeof(serv_addr));
-    portno = atoi(argv[1]);
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-    serv_addr.sin_port = htons(portno);
-
-    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
-        fehler("FEHLER beim Binden");
+    udp_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udp_sockfd < 0) {
+        fehler("FEHLER beim Öffnen des UDP-Sockets");
     }
 
-    listen(sockfd, 5);
+    bzero((char *)&tcp_serv_addr, sizeof(tcp_serv_addr));
+    bzero((char *)&udp_serv_addr, sizeof(udp_serv_addr));
+
+    tcp_portno = atoi(argv[1]);
+    udp_portno = atoi(argv[2]);
+
+    tcp_serv_addr.sin_family = AF_INET;
+    tcp_serv_addr.sin_addr.s_addr = INADDR_ANY;
+    tcp_serv_addr.sin_port = htons(tcp_portno);
+
+    udp_serv_addr.sin_family = AF_INET;
+    udp_serv_addr.sin_addr.s_addr = INADDR_ANY;
+    udp_serv_addr.sin_port = htons(udp_portno);
+
+      if (bind(tcp_sockfd, (struct sockaddr *)&tcp_serv_addr, sizeof(tcp_serv_addr)) < 0) {
+        fehler("FEHLER beim Binden des TCP-Sockets");
+    }
+
+    if (bind(udp_sockfd, (struct sockaddr *)&udp_serv_addr, sizeof(udp_serv_addr)) < 0) {
+        fehler("FEHLER beim Binden des UDP-Sockets");
+    }
+
+    listen(tcp_sockfd, 5);
     clilen = sizeof(cli_addr);
 
     netzwerkverkehr_aufzeichnen(PCAP_FILE);
 
     while (1) {
-        newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
-        if (newsockfd < 0) {
-            fehler("FEHLER beim Akzeptieren der Verbindung");
+        fd_set readfds;
+        int max_fd;
+
+        FD_ZERO(&readfds);
+        FD_SET(tcp_sockfd, &readfds);
+        FD_SET(udp_sockfd, &readfds);
+
+        max_fd = (tcp_sockfd > udp_sockfd) ? tcp_sockfd : udp_sockfd;
+
+        select(max_fd + 1, &readfds, NULL, NULL, NULL);
+
+        if (FD_ISSET(tcp_sockfd, &readfds)) {
+            newsockfd = accept(tcp_sockfd, (struct sockaddr *)&cli_addr, &clilen);
+            if (newsockfd < 0) {
+                fehler("FEHLER beim Akzeptieren der TCP-Verbindung");
+            }
+
+            bzero(buffer, MAX_BUFFER);
+            n = read(newsockfd, buffer, MAX_BUFFER - 1);
+            if (n < 0) {
+                fehler("FEHLER beim Lesen vom TCP-Socket");
+            }
+
+            printf("TCP-Nachricht erhalten: %s", buffer);
+            FILE *logFile = fopen(LOG_FILE, "a");
+            if (logFile != NULL) {
+                fprintf(logFile, "%s\n", buffer);
+                fclose(logFile);
+            } else {
+                printf("FEHLER beim Öffnen der Log-Datei\n");
+            }
+
+            n = write(newsockfd, "Nachricht erfolgreich empfangen (TCP)", 36);
+            if (n < 0) {
+                fehler("FEHLER beim Schreiben auf den TCP-Socket");
+            }
+
+            close(newsockfd);
         }
 
-        bzero(buffer, MAX_BUFFER);
-        n = read(newsockfd, buffer, MAX_BUFFER - 1);
-        if (n < 0) {
-            fehler("FEHLER beim Lesen vom Socket");
-        }
+        if (FD_ISSET(udp_sockfd, &readfds)) {
+            bzero(buffer, MAX_BUFFER);
+            clilen = sizeof(cli_addr);
+            n = recvfrom(udp_sockfd, buffer, MAX_BUFFER - 1, 0, (struct sockaddr *)&cli_addr, &clilen);
+            if (n < 0) {
+                fehler("FEHLER beim Empfangen der UDP-Nachricht");
+            }
 
-        printf("Nachricht erhalten: %s", buffer);
-        FILE *logFile = fopen(LOG_FILE, "a");
-        if(logFile != NULL) {
-            fprintf(logFile, "%s\n", buffer);
-            fclose(logFile);
-        } else {
-            printf("FEHLER beim Öffnen der Log-Datei\n");
-        }
+            printf("UDP-Nachricht erhalten: %s", buffer);
+            FILE *logFile = fopen(LOG_FILE, "a");
+            if (logFile != NULL) {
+                fprintf(logFile, "%s\n", buffer);
+                fclose(logFile);
+            } else {
+                printf("FEHLER beim Öffnen der Log-Datei\n");
+            }
 
-        n = write(newsockfd, "Nachricht erhalten", 18);
-        if (n < 0) {
-            fehler("FEHLER beim Schreiben auf den Socket");
+            n = sendto(udp_sockfd, "Nachricht erfolgreich empfangen (UDP)", 36, 0, (struct sockaddr *)&cli_addr, clilen);
+            if (n < 0) {
+                fehler("FEHLER beim Senden der UDP-Bestätigung");
+            }
         }
-
-        close(newsockfd);
     }
 
-    close(sockfd);
+    close(tcp_sockfd);
+    close(udp_sockfd);
 
     return 0;
 }
-
-        
-
-
