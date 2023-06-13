@@ -79,23 +79,34 @@ int main(int argc, char *argv[]) {
     int sockfd, portno, n, auswahl;
     struct sockaddr_in serv_addr;
     struct hostent *server;
+    struct servent *service;  
     char buffer[MAX_BUFFER];
 
-    if (argc < 3) {
-        fprintf(stderr, "Verwendung: %s hostname port\n", argv[0]);
+     if (argc < 3) {
+        fprintf(stderr, "Verwendung: %s hostname port [servicename]\n", argv[0]);
         exit(1);
-    }
-
-    portno = atoi(argv[2]);
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        fehler("FEHLER beim Öffnen des Sockets");
     }
 
     server = gethostbyname(argv[1]);
     if (server == NULL) {
         fprintf(stderr, "FEHLER, kein solcher Host\n");
         exit(1);
+    }
+
+    if (argc == 4) {
+        service = getservbyname(argv[3], "tcp");
+        if (service == NULL) {
+            fprintf(stderr, "FEHLER, kein solcher Service\n");
+            exit(1);
+        }
+        portno = ntohs(service->s_port);
+    } else {
+        portno = atoi(argv[2]);
+    }
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        fehler("FEHLER beim Öffnen des Sockets");
     }
 
     bzero((char *)&serv_addr, sizeof(serv_addr));
@@ -228,5 +239,3 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
-
-
