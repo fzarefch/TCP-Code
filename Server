@@ -20,6 +20,7 @@
 #define TCP_PORT 1234
 #define UDP_PORT 1235
 #define LOG_FILE "/home/kali/Schreibtisch/Projekt/netzwerkverkehr.log"
+#define PCAP_FILE "fixed_netzwerkverkehr.pcap"
 
 void fehler(const char *msg) {
     perror(msg);
