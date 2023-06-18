@@ -19,7 +19,7 @@
 #define MAX_BUFFER 256
 #define TCP_PORT 1234
 #define UDP_PORT 1235
-#define LOG_FILE "log.txt"
+#define LOG_FILE "/home/kali/Schreibtisch/Projekt/netzwerkverkehr.log"
 
 void fehler(const char *msg) {
     perror(msg);
