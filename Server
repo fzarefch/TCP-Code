@@ -364,3 +364,51 @@ while (1) {
 
     }
 
+
+
+    if (FD_ISSET(udp_sockfd, &readfds)) {
+
+        bzero(buffer, MAX_BUFFER);
+
+        clilen = sizeof(cli_addr);
+
+        n = recvfrom(udp_sockfd, buffer, MAX_BUFFER - 1, 0, (struct sockaddr *)&cli_addr, &clilen);
+
+        if (n < 0) {
+
+            fehler("FEHLER beim Lesen vom UDP-Socket");
+
+        }
+
+
+
+        printf("UDP-Nachricht erhalten: %s\n", buffer);
+
+        FILE *logFile = fopen(LOG_FILE, "a");
+
+        if (logFile != NULL) {
+
+            fprintf(logFile, "%s\n", buffer);
+
+            fclose(logFile);
+
+        } else {
+
+            printf("FEHLER beim Öffnen der Log-Datei\n");
+
+        }
+
+    }
+
+}
+
+
+
+close(tcp_sockfd);
+
+close(udp_sockfd);
+
+return 0;
+
+}
+
