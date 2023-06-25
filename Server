@@ -1,62 +1,31 @@
 #include <stdio.h>
-
 #include <stdlib.h>
-
 #include <string.h>
-
 #include <unistd.h>
-
 #include <sys/types.h>
-
 #include <sys/socket.h>
-
 #include <netinet/in.h>
-
 #include <netdb.h>
-
 #include <pthread.h>
-
 #include <pcap.h>
-
 #include <netinet/ip.h>
-
 #include <netinet/in.h>
-
 #include <netinet/tcp.h>
-
 #include <netinet/udp.h>
-
 #include <netinet/ether.h>
-
 #include <netinet/if_ether.h>
-
 #include <arpa/inet.h>
 
-
-
-
-
 #define MAX_BUFFER 256
-
 #define TCP_PORT 1234
-
 #define UDP_PORT 1235
-
 #define LOG_FILE "/home/kali/Schreibtisch/VSProjekte/log.txt"
-
 #define PCAP_FILE "fixed_netzwerkverkehr.pcap"
 
-
-
 void fehler(const char *msg) {
-
     perror(msg);
-
     exit(1);
-
 }
-
-
 
 typedef struct {
 
@@ -211,28 +180,26 @@ return copy_size;
 
 
 int main(int argc, char *argv[]) {
+    struct sockaddr_in tcp_serv_addr, udp_serv_addr, cli_addr;
+    int tcp_sockfd, udp_sockfd, newsockfd;
+    socklen_t clilen;
+    char buffer[MAX_BUFFER];
+    int n;
 
-struct sockaddr_in tcp_serv_addr, udp_serv_addr, cli_addr;
+ tcp_sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (tcp_sockfd < 0) {
+        fehler("FEHLER beim Öffnen des TCP-Sockets");
+    }
 
-int tcp_sockfd, udp_sockfd, newsockfd;
-
-socklen_t clilen;
-
-char buffer[MAX_BUFFER];
-
-int n;
-
-tcp_sockfd = socket(AF_INET, SOCK_STREAM, 0);
-
-udp_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-
-
-
-if (tcp_sockfd < 0 || udp_sockfd < 0) {
-
-    fehler("FEHLER beim Öffnen des Sockets");
-
-}
+    udp_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udp_sockfd < 0) {
+        fehler("FEHLER beim Öffnen des UDP-Sockets");
+    }
+    
+    FILE *logFile = fopen(LOG_FILE, "a");
+    if (logFile == NULL) {
+        fehler("FEHLER beim Öffnen der Log-Datei");
+    }
 
 
 
@@ -283,86 +250,40 @@ clilen = sizeof(cli_addr);
 netzwerkverkehr_aufzeichnen(PCAP_FILE);
 
 
-
 while (1) {
+        fd_set readfds;
+        int max_fd;
 
-    fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(tcp_sockfd, &readfds);
+        FD_SET(udp_sockfd, &readfds);
 
-    int max_fd;
+        max_fd = (tcp_sockfd > udp_sockfd) ? tcp_sockfd : udp_sockfd;
 
+        select(max_fd + 1, &readfds, NULL, NULL, NULL);
 
+        if (FD_ISSET(tcp_sockfd, &readfds)) {
+            newsockfd = accept(tcp_sockfd, (struct sockaddr *)&cli_addr, &clilen);
+            if (newsockfd < 0) {
+                fehler("FEHLER beim Akzeptieren der TCP-Verbindung");
+            }
 
-    FD_ZERO(&readfds);
+            bzero(buffer, MAX_BUFFER);
+            n = read(newsockfd, buffer, MAX_BUFFER - 1);
+            if (n < 0) {
+                fehler("FEHLER beim Lesen vom TCP-Socket");
+            }
 
-    FD_SET(tcp_sockfd, &readfds);
-
-    FD_SET(udp_sockfd, &readfds);
-
-
-
-    max_fd = (tcp_sockfd > udp_sockfd) ? tcp_sockfd : udp_sockfd;
-
-
-
-    select(max_fd + 1, &readfds, NULL, NULL, NULL);
-
-
-
-    if (FD_ISSET(tcp_sockfd, &readfds)) {
-
-        newsockfd = accept(tcp_sockfd, (struct sockaddr *)&cli_addr, &clilen);
-
-        if (newsockfd < 0) {
-
-            fehler("FEHLER beim Akzeptieren der TCP-Verbindung");
-
-        }
-
-
-
-        bzero(buffer, MAX_BUFFER);
-
-        n = read(newsockfd, buffer, MAX_BUFFER - 1);
-
-        if (n < 0) {
-
-            fehler("FEHLER beim Lesen vom TCP-Socket");
-
-        }
-
-
-
-        printf("TCP-Nachricht erhalten: %s\n", buffer);
-
-        FILE *logFile = fopen(LOG_FILE, "a");
-
-        if (logFile != NULL) {
-
+            printf("TCP-Nachricht erhalten: %s\n", buffer);
             fprintf(logFile, "%s\n", buffer);
 
-            fclose(logFile);
+            n = write(newsockfd, "Nachricht erfolgreich empfangen (TCP)", 36);
+            if (n < 0) {
+                fehler("FEHLER beim Schreiben auf den TCP-Socket");
+            }
 
-        } else {
-
-            printf("FEHLER beim Öffnen der Log-Datei\n");
-
+            close(newsockfd);
         }
-
-
-
-        n = write(newsockfd, "Nachricht erfolgreich empfangen (TCP)", 36);
-
-        if (n < 0) {
-
-            fehler("FEHLER beim Schreiben auf den TCP-Socket");
-
-        }
-
-
-
-        close(newsockfd);
-
-    }
 
 
 
@@ -402,13 +323,11 @@ while (1) {
 
 }
 
+fclose(logFile);
 
+    close(tcp_sockfd);
+    close(udp_sockfd);
 
-close(tcp_sockfd);
-
-close(udp_sockfd);
-
-return 0;
-
+    return 0;
 }
 
